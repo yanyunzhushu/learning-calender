@@ -39,11 +39,14 @@ jobs:
             for ($attempt = 0; $attempt -lt 30; $attempt++) {
               if ($service.HasExited) { throw 'Local service exited before startup.' }
               try {
-                $status = Invoke-RestMethod 'http://localhost:3107/__local/backup/status' -TimeoutSec 1
+                # 健康探测使用服务监听的 IPv4，避免 localhost 的 IPv6 回退超过短超时。
+                $status = Invoke-RestMethod 'http://127.0.0.1:3107/__local/backup/status' -TimeoutSec 2
                 if ($status.service -eq 'calendar-local-backup') { $ready = $true; break }
               } catch { Start-Sleep -Milliseconds 200 }
             }
             if (-not $ready) { throw 'Local service startup timed out.' }
+            node -e "fetch('http://localhost:3107/').then(res => { if (!res.ok) process.exit(1) }).catch(() => process.exit(1))"
+            if ($LASTEXITCODE -ne 0) { throw 'Local calendar page failed.' }
             cmd.exe /d /c start-windows.cmd
             if ($LASTEXITCODE -ne 0) { throw 'Windows launcher failed.' }
           } finally {
