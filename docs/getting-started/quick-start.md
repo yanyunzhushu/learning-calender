@@ -2,8 +2,8 @@
 
 ## 前提条件
 
-- Node.js ≥ 18（推荐使用最新 LTS 版本）
-- pnpm（推荐通过 `npm install -g pnpm` 安装）
+- Node.js ≥ 20.9.0（推荐使用受支持的 LTS 版本）
+- pnpm ≥ 9（可通过 `npm install -g pnpm@10` 安装）
 
 ## 步骤
 
@@ -21,6 +21,8 @@ pnpm dev
 
 浏览器会自动打开 `http://localhost:3000`。
 
+Windows 首次安装依赖后可以双击根目录的 `start-windows.cmd`。请保持服务窗口打开；Edge/Chrome 的「安装为应用」入口可创建桌面/任务栏入口，但仍需本地服务运行。
+
 ### 3. 开始使用
 
 应用首次启动时为空状态，没有任何预加载数据。你可以：
@@ -35,9 +37,7 @@ pnpm dev
 
 ### 5. 停止服务
 
-```bash
-pkill -f "scripts/serve"
-```
+在运行服务的原终端按 `Ctrl+C`，Mac 和 Windows 均适用。重复启动复用现有服务时，应关闭首次启动的服务。
 
 ## 下一步
 

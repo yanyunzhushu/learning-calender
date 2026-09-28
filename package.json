@@ -1,12 +1,17 @@
 {
-  "name": "my-project",
+  "name": "learning-calender",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20.9.0",
+    "pnpm": ">=9"
+  },
   "scripts": {
     "dev": "node scripts/serve.mjs",
     "build": "next build",
     "dev:next": "next dev",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test:server": "node --test scripts/serve.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",

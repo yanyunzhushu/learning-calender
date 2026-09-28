@@ -1,8 +1,6 @@
 # 部署流程
 
-> ⚠️ **占位文件 — 当前无正式部署管线**
-
-当前项目为个人本地使用，无 CI/CD 管线或生产部署配置。
+当前项目用于个人本地使用，保留 Next.js 静态导出和浏览器/PWA 运行方式。GitHub Actions 提供 macOS/Windows 兼容检查，不会自动部署网站。
 
 ## 当前构建方式
 
@@ -18,7 +16,13 @@ pnpm dev            # 启动本地静态服务器 (localhost:3000)
 `scripts/serve.mjs` 提供本地 HTTP 服务：
 - 端口 3000
 - 自动打开浏览器
-- 端口冲突自动处理（健康检测、僵尸进程清理）
+- 只监听本机，浏览器固定使用 `http://localhost:3000`
+- 同一项目的健康服务可复用；其他服务或旧版服务占用端口时明确报错
+- Windows 可双击根目录的 `start-windows.cmd`，首次缺少页面构建产物时自动构建
+
+## 兼容验证
+
+`.github/workflows/compatibility.yml` 在 macOS 和 Windows 上执行 `pnpm install --frozen-lockfile`、`pnpm test:server` 和 `pnpm build`，Windows 另验证双击入口使用的 `.cmd` 脚本。PWA 安装和浏览器界面需实机验证。
 
 ## 可能的部署方式
 
@@ -27,7 +31,7 @@ pnpm dev            # 启动本地静态服务器 (localhost:3000)
 - **GitHub Pages** — 将 `out/` 推送到 `gh-pages` 分支
 - **Vercel** — 直接部署 Next.js 项目（需移除 `output: 'export'`）
 - **Netlify** — 上传 `out/` 目录
-- **本地使用** — 直接打开 `out/index.html`（部分功能可能需 HTTP 服务）
+- **本地使用** — `pnpm dev` 或 Windows 启动入口，通过 HTTP 访问；请勿用 `file://` 直接打开 `out/index.html`
 
 ## Tauri 迁移
 

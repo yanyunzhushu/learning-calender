@@ -4,16 +4,16 @@
  * 提供 Next.js static export (`out/`) 的静态资源。
  *
  * - 端口空闲 → 直接启动（毫秒级就绪）
- * - 端口被健康服务器占用 → 退出不做任何事
- * - 端口被僵尸进程占用 → 杀掉重启
+ * - 端口被同一项目的健康服务器占用 → 复用并打开浏览器
+ * - 端口被其他进程占用 → 提示用户处理，不强制结束进程
  * - out/ 不存在 → 自动构建
  * - 服务器就绪后自动打开浏览器
  */
 import http from 'http'
 import fs from 'fs'
 import path from 'path'
-import { randomBytes } from 'crypto'
-import { execSync } from 'child_process'
+import { createHash, randomBytes } from 'crypto'
+import { spawn, spawnSync } from 'child_process'
 import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -21,7 +21,10 @@ const PROJECT_ROOT = path.resolve(__dirname, '..')
 const ROOT = path.join(PROJECT_ROOT, 'out')
 const BACKUP_DIR = path.join(PROJECT_ROOT, 'backups')
 const MAX_BACKUP_BYTES = 10 * 1024 * 1024
-const PORT = parseInt(process.env.PORT || '3000', 10)
+const PORT = Number(process.env.PORT || '3000')
+const PROJECT_ID = createHash('sha256')
+  .update(process.platform === 'win32' ? PROJECT_ROOT.toLowerCase() : PROJECT_ROOT)
+  .digest('hex')
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -119,10 +122,18 @@ async function saveBackup(req, res) {
 }
 
 function handle(req, res) {
-  let url = req.url.split('?')[0]
+  let url
+  try {
+    url = decodeURIComponent(req.url.split('?')[0]).replaceAll('\\', '/')
+    if (!url.startsWith('/') || url.includes('\0')) throw new Error('非法路径')
+  } catch {
+    res.writeHead(400)
+    res.end('Bad Request')
+    return
+  }
 
   if (url === '/__local/backup/status' && req.method === 'GET') {
-    sendJson(res, 200, { service: 'calendar-local-backup' })
+    sendJson(res, 200, { service: 'calendar-local-backup', projectId: PROJECT_ID })
     return
   }
   if (url === '/__local/backup') {
@@ -131,52 +142,52 @@ function handle(req, res) {
     return
   }
 
-  let filePath = path.join(ROOT, url === '/' ? 'index.html' : url)
+  let filePath = path.resolve(ROOT, `.${url}`)
+  const relative = path.relative(ROOT, filePath)
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    res.writeHead(403)
+    res.end('Forbidden')
+    return
+  }
+  if (url === '/') filePath = path.join(ROOT, 'index.html')
   if (serveFile(res, filePath)) return
 
-  if (!url.endsWith('/') && url !== '/') {
-    filePath = path.join(ROOT, url, 'index.html')
-    if (serveFile(res, filePath)) return
+  if (!path.posix.extname(url) && url !== '/') {
+    if (serveFile(res, path.join(filePath, 'index.html'))) return
   }
 
-  if (serveFile(res, path.join(ROOT, 'index.html'))) return
+  // 页面导航可回到首页；缺失的 JS/CSS 等资源必须返回 404。
+  if (!path.posix.extname(url) && serveFile(res, path.join(ROOT, 'index.html'))) return
 
   res.writeHead(404)
   res.end('Not Found')
 }
 
-// ---------- 确保构建产物存在 ----------
+// ---------- 运行环境与构建 ----------
 
-if (!fs.existsSync(ROOT)) {
+function ensureBuild() {
+  if (fs.existsSync(path.join(ROOT, 'index.html'))) return
+  const nextCli = path.join(PROJECT_ROOT, 'node_modules', 'next', 'dist', 'bin', 'next')
+  if (!fs.existsSync(nextCli)) {
+    throw new Error('缺少项目依赖，请先在项目目录运行 pnpm install。')
+  }
   console.log('构建静态文件…')
-  execSync('npx next build', { cwd: path.resolve(__dirname, '..'), stdio: 'inherit' })
+  // 使用当前 Node 直接执行本地 CLI，兼容 Windows 的 .cmd 及含空格的路径。
+  const result = spawnSync(process.execPath, [nextCli, 'build'], { cwd: PROJECT_ROOT, stdio: 'inherit' })
+  if (result.error) throw result.error
+  if (result.status !== 0 || !fs.existsSync(path.join(ROOT, 'index.html'))) {
+    throw new Error('构建失败，请运行 pnpm build 查看错误。')
+  }
   console.log('构建完成。')
-}
-
-// ---------- 端口检测 ----------
-
-/** 尝试监听端口，成功返回 true（端口空闲），失败返回 false（被占用） */
-function tryListen(port) {
-  return new Promise((resolve) => {
-    const srv = http.createServer()
-    srv.once('error', (err) => {
-      resolve(err.code !== 'EADDRINUSE') // 非"地址已用"错误也视为可用（继续尝试）
-    })
-    srv.listen(port, () => {
-      srv.close()
-      resolve(true) // 端口空闲
-    })
-  })
 }
 
 /** 检查端口上的 HTTP 服务是否正常响应 */
 async function isHealthy() {
   try {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 500)
-    const res = await fetch(`http://localhost:${PORT}/__local/backup/status`, { signal: controller.signal })
-    clearTimeout(timer)
-    return res.ok && (await res.json()).service === 'calendar-local-backup'
+    const res = await fetch(`http://127.0.0.1:${PORT}/__local/backup/status`, { signal: AbortSignal.timeout(1000) })
+    if (!res.ok) return false
+    const status = await res.json()
+    return status.service === 'calendar-local-backup' && status.projectId === PROJECT_ID
   } catch {
     return false
   }
@@ -184,73 +195,53 @@ async function isHealthy() {
 
 // ---------- 跨平台工具 ----------
 
-function isWindows() {
-  return process.platform === 'win32'
-}
-
 function openBrowser(url) {
   if (process.env.CI || process.env.OPEN_BROWSER === 'false') return
-  try {
-    const cmd = isWindows() ? `start "" "${url}"` : process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`
-    execSync(cmd, { stdio: 'ignore' })
-  } catch {
-    /* 忽略（无对应命令时静默） */
-  }
-}
-
-function killPort(port) {
-  try {
-    if (isWindows()) {
-      // Windows: netstat 查 PID → taskkill
-      const out = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8' })
-      const pid = out.split('\n')
-        .map((line) => line.trim().split(/\s+/))
-        .find((parts) => parts[0] === 'TCP' && parts[1]?.endsWith(`:${port}`) && parts[3] === 'LISTENING')?.[4]
-      if (pid && pid !== '0') execSync(`taskkill /PID ${pid} /F`, { stdio: 'ignore' })
-    } else {
-      execSync(`lsof -tiTCP:${port} -sTCP:LISTEN | xargs kill -9 2>/dev/null`, { stdio: 'ignore' })
-    }
-  } catch {
-    /* 忽略 */
-  }
+  const command = process.platform === 'win32' ? 'cmd.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open'
+  // Windows 的 start 是 cmd 内置命令；URL 只包含固定主机和已校验端口。
+  const args = process.platform === 'win32' ? ['/d', '/s', '/c', `"start "" "${url}""`] : [url]
+  const child = spawn(command, args, {
+    stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: process.platform === 'win32',
+  })
+  child.on('error', () => console.warn(`无法自动打开浏览器，请手动访问 ${url}`))
+  child.on('exit', (code) => {
+    if (code !== 0 && code !== null) console.warn(`无法自动打开浏览器，请手动访问 ${url}`)
+  })
+  child.unref()
 }
 
 // ---------- 启动 ----------
 
 async function start() {
-  const free = await tryListen(PORT)
-
-  if (free) {
-    // 端口空闲 → 直接启动（最快路径，无任何额外延迟）
-    const server = http.createServer(handle)
-    server.listen(PORT, () => {
-      console.log(`Server ready on http://localhost:${PORT}`)
-      openBrowser(`http://localhost:${PORT}/`)
-    })
-    return
+  const [major, minor] = process.versions.node.split('.').map(Number)
+  if (major < 20 || (major === 20 && minor < 9)) {
+    throw new Error(`需要 Node.js >= 20.9.0，当前为 ${process.versions.node}。请安装受支持的 Node.js LTS。`)
   }
-
-  // 端口被占用：检查是否健康服务器
-  if (await isHealthy()) {
-    console.log(`Server ready on http://localhost:${PORT}`)
-    openBrowser(`http://localhost:${PORT}/`)
-    process.exit(0)
+  if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+    throw new Error('PORT 必须是 1 到 65535 之间的整数。')
   }
-
-  // 僵尸进程 → 杀掉重启
-  console.log(`端口 ${PORT} 被僵尸进程占用，正在释放…`)
-  killPort(PORT)
-  // 等待端口释放
-  for (let i = 0; i < 10; i++) {
-    if (await tryListen(PORT)) break
-    await new Promise((r) => setTimeout(r, 200))
-  }
-
+  ensureBuild()
   const server = http.createServer(handle)
-  server.listen(PORT, () => {
-    console.log(`Server ready on http://localhost:${PORT}`)
-    openBrowser(`http://localhost:${PORT}/`)
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    // 仅监听本机；浏览器地址保持 localhost，继续使用原来的 localStorage。
+    server.listen(PORT, '127.0.0.1', resolve)
+  }).catch(async (error) => {
+    if (error.code !== 'EADDRINUSE') throw error
+    if (!await isHealthy()) {
+      throw new Error(`端口 ${PORT} 已被其他服务或旧版日程服务占用。请先在原终端按 Ctrl+C 停止对应服务后重试；程序不会强制结束其他进程。`)
+    }
+    console.log(`已复用本项目的日程服务：http://localhost:${PORT}`)
   })
+
+  if (server.listening) {
+    console.log(`Server ready on http://localhost:${PORT}`)
+    console.log('请保持此窗口打开；按 Ctrl+C 停止服务。')
+  }
+  openBrowser(`http://localhost:${PORT}/`)
 }
 
-start()
+start().catch((error) => {
+  console.error(`启动失败：${error.message}`)
+  process.exitCode = 1
+})

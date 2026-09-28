@@ -1,0 +1,3 @@
+# Windows 启动入口使用 CRLF；源码和 shell 脚本保持 LF。
+* text=auto eol=lf
+*.cmd text eol=crlf

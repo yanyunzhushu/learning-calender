@@ -1,0 +1,52 @@
+name: Platform compatibility
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:server
+      - run: pnpm build
+      - name: Verify Windows launcher
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:OPEN_BROWSER = 'false'
+          $env:PORT = '3107'
+          $service = Start-Process node -ArgumentList 'scripts/serve.mjs' -PassThru -RedirectStandardOutput 'server-smoke.log' -RedirectStandardError 'server-smoke-error.log'
+          try {
+            $ready = $false
+            for ($attempt = 0; $attempt -lt 30; $attempt++) {
+              if ($service.HasExited) { throw 'Local service exited before startup.' }
+              try {
+                $status = Invoke-RestMethod 'http://localhost:3107/__local/backup/status' -TimeoutSec 1
+                if ($status.service -eq 'calendar-local-backup') { $ready = $true; break }
+              } catch { Start-Sleep -Milliseconds 200 }
+            }
+            if (-not $ready) { throw 'Local service startup timed out.' }
+            cmd.exe /d /c start-windows.cmd
+            if ($LASTEXITCODE -ne 0) { throw 'Windows launcher failed.' }
+          } finally {
+            if (-not $service.HasExited) { Stop-Process -Id $service.Id }
+            Get-Content server-smoke.log, server-smoke-error.log
+          }

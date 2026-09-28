@@ -39,7 +39,7 @@ localStorage
 ## 文件组织
 
 ```
-mac_calender/
+learning_calender/
 ├── app/
 │   ├── globals.css          # 全局样式 + Tailwind v4 主题
 │   ├── layout.tsx           # 根布局

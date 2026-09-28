@@ -4,8 +4,8 @@
 
 | 工具 | 最低版本 | 推荐版本 |
 |------|---------|---------|
-| Node.js | 18.x | 最新 LTS |
-| pnpm | 8.x | 最新稳定版 |
+| Node.js | 20.9.0 | 受支持的 LTS |
+| pnpm | 9.x | 10.x |
 
 ## 安装步骤
 
@@ -13,7 +13,7 @@
 
 ```bash
 git clone <仓库地址>
-cd mac_calender
+cd learning_calender
 ```
 
 ### 2. 安装依赖
@@ -32,6 +32,8 @@ pnpm install
 
 完整清单见 `package.json`。
 
+Windows 可在文件资源管理器的项目地址栏输入 `cmd` 打开命令提示符。请在 Windows 上重新安装依赖，不要复制其他系统的 `node_modules/`。
+
 ### 3. 验证安装
 
 ```bash
@@ -39,22 +41,34 @@ pnpm build        # 构建静态文件到 out/
 pnpm dev          # 启动本地服务
 ```
 
+Windows 完成首次 `pnpm install` 后，也可以双击根目录的 `start-windows.cmd`。缺少 `out/index.html` 时会自动构建。项目放在本机可写目录，服务窗口需要保持打开，按 `Ctrl+C` 停止。
+
+在 Edge/Chrome 中安装为应用后仍需要本地服务运行，当前 Service Worker 没有离线缓存。Mac 的运行命令和数据存储方式保持一致。
+
 ## 常见安装问题
 
 ### pnpm 未安装
 
 ```bash
-npm install -g pnpm
+npm install -g pnpm@10
 ```
+
+PowerShell 若提示 `pnpm.ps1` 被执行策略阻止，使用 `pnpm.cmd install` 和 `pnpm.cmd dev`，或者切换到命令提示符。
 
 ### 端口 3000 被占用
 
 `pnpm dev` 的启动脚本（`scripts/serve.mjs`）会自动处理：
 - 端口空闲 → 直接启动
-- 已被健康服务器占用 → 复用，不重复启动
-- 被僵尸进程占用 → 自动杀进程后重启
+- 已被同一项目的健康服务器占用 → 复用，不重复启动
+- 被其他服务或旧版日程服务占用 → 显示错误，不强制结束进程
 
-无需手动处理端口冲突。
+先在对应服务的原终端按 `Ctrl+C` 停止，再重新启动。日常保持 `http://localhost:3000`，避免因切换主机名或端口而使用不同的浏览器存储。
+
+## 更新与数据迁移
+
+更新源码后执行 `pnpm install`、`pnpm build`，重启本地服务并刷新页面。重新构建不会清除浏览器 localStorage。
+
+Mac 与 Windows 间通过顶部「备份」导出的 JSON 迁移数据；新电脑导入前会备份当前数据并提示替换。数据不会随源码或 Git 自动同步。详见[备份与恢复](../operations/backup.md)。
 
 ### 构建失败（TypeScript 错误）
 
